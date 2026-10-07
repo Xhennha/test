@@ -5,8 +5,8 @@
 > **Antes de empezar.** Esta guía y sus scripts se prepararon **sin acceso a tu notebook**.
 > No se aplicó ningún ajuste ni se midió nada en tu equipo. Por eso, la tabla de resultados
 > (sección 10) está vacía: solo deben ir ahí **tus** mediciones. Los scripts se probaron con datos
-> simulados, no en un Windows real; si alguno falla, el informe mostrará el error y ningún
-> script hace cambios en el sistema (salvo `revertir-archivos.ps1`, y solo si escribes **S** para confirmar).
+> simulados, no en un Windows real; si alguno falla, el informe mostrará el error. Solo dos scripts
+> cambian algo (`aplicar-ajustes-windows.ps1` y `revertir-archivos.ps1`), y únicamente si escribes **S** para confirmar.
 
 ---
 
@@ -19,9 +19,22 @@
 | `scripts/3-monitor-carga.ps1` | Registra la CPU, el hilo más ocupado de Roblox y la GPU (uso, temperatura y bajadas de reloj) mientras juegas | No |
 | `scripts/4-prueba-red.ps1` | Mide ping, jitter y pérdida de paquetes hacia el router, Internet y el último servidor de Roblox | No |
 | `scripts/5-resumen-presentmon.ps1` | Calcula FPS promedio, 1% low, 0.1% low, estabilidad y cuello de botella a partir de una captura de PresentMon, y arma una tabla comparativa | No |
+| `scripts/aplicar-ajustes-windows.ps1` | Aplica solo los ajustes seguros de Windows: modo de juego, grabación en segundo plano desactivada, Roblox en la RTX 2050, optimizaciones para juegos en ventana y, si estaba limitado, el turbo de la CPU | Sí, muestra el plan, pide confirmación, hace respaldo y permite deshacer |
 | `scripts/revertir-archivos.ps1` | Restaura los archivos del respaldo | Sí, pide confirmación y guarda copia de lo actual |
+| `1-DIAGNOSTICO.bat` / `2-APLICAR-AJUSTES-WINDOWS.bat` | Ejecutan esos dos scripts con doble clic | Igual que el script que ejecutan |
 
 Todos los resultados se guardan en **Escritorio\RobloxOpt**.
+
+### Modo rápido (si no quieres medir todo)
+
+1. Doble clic en **`1-DIAGNOSTICO.bat`** → lee el «RESUMEN DE ALERTAS» del final: es la lista de lo que está mal en tu equipo.
+2. Doble clic en **`2-APLICAR-AJUSTES-WINDOWS.bat`** → revisa el plan y escribe **S**. Hace respaldo antes y, al terminar,
+   te muestra el comando exacto para deshacer.
+3. Haz a mano la lista que muestra al final: pantalla a 165 Hz, modo de energía, NitroSense, perfil de NVIDIA, gráficos de
+   Roblox, Discord y FastFlags (secciones 5 a 7). Eso no se puede cambiar de forma segura con un script.
+
+Si Windows muestra un aviso al abrir el `.bat` (porque viene de Internet), elige «Más información → Ejecutar de todas formas»
+solo si lo descargaste de tu propio repositorio.
 
 ### Cómo ejecutar un script
 
@@ -384,6 +397,7 @@ experimentales con cookie y con directorio estático si está disponible.
 
 | Cambio | Cómo volver atrás |
 |---|---|
+| Lo aplicado por `aplicar-ajustes-windows.ps1` | `powershell -ExecutionPolicy Bypass -File .\aplicar-ajustes-windows.ps1 -Deshacer "<deshacer-ajustes-windows-….json>"` (el comando exacto aparece al terminar de aplicar) |
 | FastFlags, ajustes de Fishstrap y ajustes del juego | Cierra Roblox y Fishstrap → `powershell -ExecutionPolicy Bypass -File .\revertir-archivos.ps1 -Respaldo "<carpeta respaldo-...>"` |
 | Perfil de NVIDIA | Panel de NVIDIA → perfil de Roblox → **Restaurar** (o vuelve a los valores de tus capturas) |
 | Frecuencia de pantalla | *Pantalla avanzada* → el valor que figura en `estado-original.txt` |
