@@ -174,8 +174,13 @@ Dices que Roblox ya usa la RTX 2050. Comprobarlo cuesta poco:
 - `2-diagnostico.ps1` con Blade Ball abierto debe mostrar `RobloxPlayerBeta.exe` en la GPU NVIDIA.
 - O bien: *Administrador de tareas → Detalles* → clic derecho en las columnas → *Seleccionar columnas* → **Motor de GPU**: Roblox debe usar la GPU de NVIDIA (normalmente *GPU 1 – 3D*).
 
-Si no la usa: *Configuración → Sistema → Pantalla → Gráficos* → *Agregar aplicación* → el
-`RobloxPlayerBeta.exe` que indica el diagnóstico → *Opciones* → **Alto rendimiento (NVIDIA)**.
+Si no la usa, en este orden:
+1. **Fishstrap → activa el directorio estático** (*Static Directory*), para que la ruta de Roblox deje de cambiar. Abre Roblox una vez para que se instale en la carpeta nueva.
+2. **`2-APLICAR-AJUSTES-WINDOWS.bat`**: añade la preferencia de alto rendimiento para la ruta actual de Roblox.
+   A mano: *Configuración → Sistema → Pantalla → Gráficos* → *Agregar aplicación* → el `RobloxPlayerBeta.exe`
+   que indica el diagnóstico → *Opciones* → **Alto rendimiento (NVIDIA)**.
+3. **Panel de NVIDIA**, perfil de Roblox → *Procesador de gráficos preferido* → **Procesador NVIDIA de alto rendimiento** (sección 6). Va por nombre de ejecutable y sobrevive a las actualizaciones.
+4. **Comprueba** con una partida en pantalla (no minimizado) en el Administrador de tareas (columna *Motor de GPU*) o repitiendo el diagnóstico.
 
 Ojo: si el ejecutable está en una carpeta `version-xxxxxxxx`, esa ruta cambia con cada actualización
 de Roblox y la preferencia de Windows se pierde. Fishstrap 3.0.3 añadió un **directorio estático**
@@ -188,6 +193,8 @@ de ejecutable, así que no se pierde al actualizar.
 - **NitroSense** (tecla Nitro): modo **Rendimiento**, o **Turbo** si lo tienes y las temperaturas lo permiten. Ventiladores en automático o al máximo mientras juegas.
 - El diagnóstico avisa si el plan de energía limita la CPU (estado máximo del procesador < 100 % o turbo desactivado). Si lo hace, la forma limpia de arreglarlo es *Panel de control → Opciones de energía → Restaurar la configuración predeterminada del plan*.
 - No uses el plan «Rendimiento máximo» (Ultimate Performance) en un portátil: impide que la CPU baje a estados de reposo, sube la temperatura y puede provocar *throttling*.
+  Algunos programas (por ejemplo ExitLag) crean su propia copia de ese plan. Además, con un plan distinto de **Equilibrado**, el «Modo de energía» de Windows 11 deja de aplicarse.
+  Prueba *Panel de control → Opciones de energía →* **Equilibrado** + modo **Mejor rendimiento**, y compara con tus mediciones.
 - En el *Administrador de tareas → Procesos*, comprueba que Roblox **no** esté en **Modo de eficiencia** (icono de hoja).
 
 ### 5.4 Gráficos híbridos y MUX
@@ -212,6 +219,8 @@ y después. Si la opción no existe, el equipo funciona siempre en modo híbrido
 - **OneDrive y launchers** (Steam, Epic): pausa sincronizaciones y descargas mientras juegas.
 - **Inicio de Windows:** *Configuración → Aplicaciones → Inicio* → desactiva lo que no necesites al arrancar (decisión tuya; el diagnóstico lista los programas).
 - **RivaTuner / MSI Afterburner:** si limitan los FPS, no los combines con otro limitador.
+- **Limpiadores de RAM (Mem Reduct y similares):** ciérralos y quítalos del inicio. Vaciar la memoria a la fuerza obliga a recargarla y puede causar tirones; con 24 GB no hacen falta.
+- **Wallpaper Engine:** en sus ajustes de rendimiento, pon «Otra aplicación en pantalla completa/maximizada» en **Pausar** o **Detener**, o ciérralo mientras juegas.
 
 ### 5.7 Almacenamiento
 Deja al menos un 15-20 % libre en C:. Para liberar espacio, usa *Configuración → Sistema →
@@ -353,6 +362,7 @@ Si 165 no cumple, elige 144; si 144 tampoco, 120. **Un 144 estable es mejor para
 | Picos en PresentMon y tirones que ves en pantalla | Rendimiento local, no red | Secciones 3 a 8 |
 
 No uses «reductores de ping», VPN «gaming» ni ajustes TCP sin una medición que demuestre la mejora.
+Si ya usas uno (por ejemplo ExitLag), compara el ping y su estabilidad en Roblox con él y sin él en la misma partida o servidor.
 
 ---
 

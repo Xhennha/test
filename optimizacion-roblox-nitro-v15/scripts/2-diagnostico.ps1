@@ -41,6 +41,22 @@ function Get-PowerSettingAcDc([string]$sub, [string]$setting) {
     [pscustomobject]@{ AC = [Convert]::ToInt32($hex[-2], 16); DC = [Convert]::ToInt32($hex[-1], 16) }
 }
 
+# Estado del Wi-Fi sin nombre de red ni direcciones MAC. netsh puede escribir en UTF-8
+# aunque la consola use otra codificacion: se prueba UTF-8 y, si sale mal, la codificacion por defecto.
+function Get-WifiStatus {
+    $prev = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.Encoding]::UTF8
+        $o = @(& netsh wlan show interfaces 2>$null)
+    } finally { [Console]::OutputEncoding = $prev }
+    if (($o -join '') -match [char]0xFFFD) { $o = @(& netsh wlan show interfaces 2>$null) }
+    $o | Where-Object {
+        $_ -match ':' -and
+        $_ -notmatch 'SSID|BSSID|Perfil|Profile|Name|Nombre|GUID' -and
+        $_ -notmatch '([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}'
+    } | ForEach-Object { $_.Trim() }
+}
+
 # FastFlags aceptadas por Roblox segun el anuncio del 29-09-2025 (lista de permitidos).
 # Roblox puede cambiarla; si una flag que usas no aparece aqui, revisa el anuncio oficial.
 $allowlist = @(
@@ -128,7 +144,9 @@ if ($smi) {
     if ($gpuProcs) { $gpuProcs | ForEach-Object { W "    $($_.Trim())" } } else { W '    (ninguno listado)' }
     if ($robloxRunning.Count -gt 0) {
         if ($smiFull -match 'RobloxPlayerBeta') { W '  OK: Roblox esta abierto y aparece usando la RTX 2050.' }
-        else { Alert 'Roblox esta abierto pero NO aparece en la GPU NVIDIA. Comprueba la preferencia de GPU (guia, seccion Windows).' }
+        else {
+            Alert 'Roblox esta abierto pero NO aparece en la GPU NVIDIA: probablemente esta usando la Intel UHD. Arreglo: guia, seccion 5.2 (si Roblox estaba minimizado, repite con la partida en pantalla).'
+        }
     } else {
         W '  (Roblox no esta abierto: vuelve a ejecutar con Blade Ball abierto para comprobar la GPU que usa.)'
     }
@@ -139,8 +157,8 @@ if ($smi) {
 # ---------------------------------------------------------------------------
 Section '3. Energia y limites de rendimiento'
 W ("Plan activo: {0}" -f ((powercfg /getactivescheme) -join ' '))
-if ((powercfg /getactivescheme) -match 'e9a42b02-d5df-448d-aa00-03f14749eb61') {
-    W '  Plan "Rendimiento maximo/definitivo" activo. En portatiles suele subir temperatura sin ganancia clara; si ves throttling termico, vuelve a "Equilibrado".'
+if ((powercfg /getactivescheme) -match 'e9a42b02-d5df-448d-aa00-03f14749eb61|Ultimate|definitivo|ximo rendimiento') {
+    Alert 'Plan de energia "Ultimate Performance" activo (lo crean ExitLag y otros optimizadores). En un portatil sube la temperatura y, con un plan distinto de Equilibrado, el "Modo de energia" de Windows 11 deja de aplicarse. Prueba Equilibrado + Mejor rendimiento y compara (guia, seccion 5.3).'
 }
 $pp = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes'
 $modeNames = @{
@@ -203,7 +221,7 @@ foreach ($k in $gpuPrefs.Keys) {
         switch ($Matches[1]) { '0' { 'Windows decide' } '1' { 'Ahorro de energia (Intel)' } '2' { 'Alto rendimiento (NVIDIA)' } default { $gpuPrefs[$k] } }
     } else { $gpuPrefs[$k] }
     W "  $k -> $pref"
-    if (-not (Test-Path -LiteralPath $k)) { W '    (esta ruta ya no existe: entrada obsoleta de una version anterior de Roblox)' }
+    if (-not (Test-Path -LiteralPath $k)) { W '    (esa ruta ya no existe: entrada obsoleta, no tiene efecto)' }
     elseif ($pref -ne 'Alto rendimiento (NVIDIA)') { Alert "Roblox tiene preferencia de GPU '$pref' en: $k" }
 }
 
@@ -223,31 +241,41 @@ Section '5. Procesos en segundo plano y superposiciones'
 $nCpu = [Environment]::ProcessorCount
 function Get-ProcSample {
     $h = @{}
-    foreach ($r in Get-CimInstance Win32_PerfRawData_PerfProc_Process) {
+    foreach ($r in Get-CimInstance Win32_PerfRawData_PerfProc_Process -ErrorAction Stop) {
         if ($r.Name -eq '_Total' -or $r.Name -eq 'Idle') { continue }
         $h["$($r.IDProcess)"] = $r
     }
     $h
 }
 W 'Midiendo uso de CPU durante 3 segundos...'
-$s1 = Get-ProcSample
-Start-Sleep -Seconds 3
-$s2 = Get-ProcSample
-$rows = foreach ($k in $s2.Keys) {
-    if (-not $s1.ContainsKey($k)) { continue }
-    $a = $s1[$k]; $b = $s2[$k]
-    $dt = [double]$b.Timestamp_Sys100NS - [double]$a.Timestamp_Sys100NS
-    if ($dt -le 0) { continue }
-    [pscustomobject]@{
-        Nombre = $b.Name
-        CPU    = ([double]$b.PercentProcessorTime - [double]$a.PercentProcessorTime) / $dt * 100 / $nCpu
-        RamMB  = [double]$b.WorkingSetPrivate / 1MB
+$perfOk = $true
+try {
+    $s1 = Get-ProcSample
+    Start-Sleep -Seconds 3
+    $s2 = Get-ProcSample
+} catch { $perfOk = $false }
+if ($perfOk) {
+    $rows = foreach ($k in $s2.Keys) {
+        if (-not $s1.ContainsKey($k)) { continue }
+        $a = $s1[$k]; $b = $s2[$k]
+        $dt = [double]$b.Timestamp_Sys100NS - [double]$a.Timestamp_Sys100NS
+        if ($dt -le 0) { continue }
+        [pscustomobject]@{
+            Nombre = $b.Name
+            CPU    = ([double]$b.PercentProcessorTime - [double]$a.PercentProcessorTime) / $dt * 100 / $nCpu
+            RamMB  = [double]$b.WorkingSetPrivate / 1MB
+        }
     }
+    W 'Top 12 por CPU (% del total del procesador):'
+    $rows | Sort-Object CPU -Descending | Select-Object -First 12 | ForEach-Object { W ("  {0,-34} {1,5:N1}%   {2,7:N0} MB" -f $_.Nombre, $_.CPU, $_.RamMB) }
+    W 'Top 8 por memoria privada:'
+    $rows | Sort-Object RamMB -Descending | Select-Object -First 8 | ForEach-Object { W ("  {0,-34} {1,7:N0} MB" -f $_.Nombre, $_.RamMB) }
+} else {
+    W '  No se pudo medir: los contadores de rendimiento de Windows (WMI) no estan disponibles en este equipo.'
+    W '  No afecta a los juegos, pero 3-monitor-carga.ps1 no podra medir la CPU. Para repararlos (opcional):'
+    W '  PowerShell como administrador -> winmgmt /resyncperf  y reinicia. Si sigue igual: lodctr /R  y de nuevo winmgmt /resyncperf.'
+    W '  Mientras tanto, mira el uso de CPU en el Administrador de tareas.'
 }
-W 'Top 12 por CPU (% del total del procesador):'
-$rows | Sort-Object CPU -Descending | Select-Object -First 12 | ForEach-Object { W ("  {0,-34} {1,5:N1}%   {2,7:N0} MB" -f $_.Nombre, $_.CPU, $_.RamMB) }
-W 'Top 8 por memoria privada:'
-$rows | Sort-Object RamMB -Descending | Select-Object -First 8 | ForEach-Object { W ("  {0,-34} {1,7:N0} MB" -f $_.Nombre, $_.RamMB) }
 
 $known = [ordered]@{
     'Discord'           = 'Discord: desactiva su superposicion del juego (guia, seccion superposiciones).'
@@ -269,12 +297,15 @@ $known = [ordered]@{
     'firefox'           = 'Firefox: pestanas con video consumen CPU/GPU.'
     'steam'             = 'Steam abierto (no afecta a Roblox salvo descargas).'
     'EpicGamesLauncher' = 'Epic Games Launcher (descargas en segundo plano).'
+    'memreduct'         = 'Mem Reduct: vaciar la RAM a la fuerza obliga a recargarla y puede causar tirones. Con 24 GB no hace falta: cierralo y quitalo del inicio.'
+    'ExitLag'           = 'ExitLag: cambia la ruta de red. Compara el ping de Roblox con y sin el; no lo des por bueno sin medir.'
 }
 $running = @(Get-Process -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name -Unique)
 W 'Programas conocidos que pueden influir (abiertos ahora):'
 $anyKnown = $false
 foreach ($k in $known.Keys) { if ($running -contains $k) { W "  - $($known[$k])"; $anyKnown = $true } }
 if (-not $anyKnown) { W '  (ninguno de la lista)' }
+if ($running -contains 'memreduct') { Alert 'Mem Reduct esta abierto: los limpiadores de RAM pueden causar tirones. Cierralo y quitalo del inicio.' }
 if ($running -contains 'rbxfpsunlocker') { Alert 'rbxfpsunlocker esta abierto: es obsoleto y puede interferir con Roblox.' }
 
 W 'Programas configurados para iniciar con Windows (pueden estar ya deshabilitados; confirma en Configuracion > Aplicaciones > Inicio):'
@@ -314,8 +345,7 @@ if ($route) {
     if ("$($ad.PhysicalMediaType)" -match '802\.11') {
         Alert 'Conectado por Wi-Fi. Para Blade Ball, Ethernet suele dar ping mas estable. Mide con 4-prueba-red.ps1.'
         W 'Estado Wi-Fi (sin nombre de red ni direcciones):'
-        & netsh wlan show interfaces 2>$null | Where-Object { $_ -match ':' -and $_ -notmatch 'SSID|BSSID|Perfil|Profile|sica|Physical|Name|Nombre|GUID' } |
-            ForEach-Object { W "  $($_.Trim())" }
+        Get-WifiStatus | ForEach-Object { W "  $_" }
     }
 }
 
@@ -359,6 +389,9 @@ foreach ($ln in 'Fishstrap', 'Bloxstrap') {
                 elseif ($null -ne $val -and -not ($val -is [string] -or $val -is [ValueType])) { $val = ConvertTo-Json -InputObject $val -Compress -Depth 3 }
                 W ("    {0} = {1}" -f $p.Name, $val)
             }
+            if ($ln -eq 'Fishstrap' -and $s.PSObject.Properties.Name -contains 'StaticDirectory' -and -not $s.StaticDirectory) {
+                Alert 'Fishstrap tiene el directorio estatico desactivado: la ruta de Roblox cambia con cada actualizacion y Windows pierde la preferencia de GPU. Activalo (guia, seccion 5.2).'
+            }
         } catch { W "  No se pudo leer Settings.json: $($_.Exception.Message)" }
     }
 }
@@ -381,6 +414,10 @@ foreach ($f in $ffFiles) {
             $ok = $allowlist -contains $p.Name
             if (-not $ok) { $ignored++ }
             W ("    [{0}] {1} = {2}" -f $(if ($ok) { 'PERMITIDA' } else { 'IGNORADA' }), $p.Name, $p.Value)
+        }
+        $msaa = $props | Where-Object { $_.Name -eq 'FIntDebugForceMSAASamples' } | Select-Object -First 1
+        if ($msaa -and ("$($msaa.Value)" -as [int]) -gt 1 -and $f.FullName -notmatch '[\\/]Versions[\\/]') {
+            Alert ("FastFlag de MSAA forzado a x{0}: es carga extra para la GPU. Para rendimiento, ponlo en 1 (sin MSAA) o quitalo desde Fishstrap." -f $msaa.Value)
         }
         if ($ignored -gt 0) {
             Alert "$ignored FastFlag(s) fuera de la lista permitida en $($f.FullName). Roblox las ignora: quitalas desde el editor de Fishstrap para dejar la configuracion limpia."

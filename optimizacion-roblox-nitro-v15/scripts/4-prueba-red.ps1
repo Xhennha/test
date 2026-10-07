@@ -74,8 +74,18 @@ if ($route) {
     $isWifi = "$($ad.PhysicalMediaType)" -match '802\.11'
     S ("Conexion: {0} ({1}) - {2} - {3}" -f $ad.Name, $ad.InterfaceDescription, $ad.LinkSpeed, $(if ($isWifi) { 'Wi-Fi' } else { 'cable/otro' }))
     if ($isWifi) {
-        & netsh wlan show interfaces 2>$null | Where-Object { $_ -match ':' -and $_ -notmatch 'SSID|BSSID|Perfil|Profile|sica|Physical|Name|Nombre|GUID' } |
-            ForEach-Object { S "  $($_.Trim())" }
+        # netsh puede escribir en UTF-8 aunque la consola use otra codificacion.
+        $prev = [Console]::OutputEncoding
+        try {
+            [Console]::OutputEncoding = [Text.Encoding]::UTF8
+            $wl = @(& netsh wlan show interfaces 2>$null)
+        } finally { [Console]::OutputEncoding = $prev }
+        if (($wl -join '') -match [char]0xFFFD) { $wl = @(& netsh wlan show interfaces 2>$null) }
+        $wl | Where-Object {
+            $_ -match ':' -and
+            $_ -notmatch 'SSID|BSSID|Perfil|Profile|Name|Nombre|GUID' -and
+            $_ -notmatch '([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}'
+        } | ForEach-Object { S "  $($_.Trim())" }
     }
 }
 

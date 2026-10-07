@@ -71,27 +71,53 @@ if ($smi) {
     Write-Warning 'No se encontro nvidia-smi: solo se registrara la CPU.'
 }
 
+# Los contadores de rendimiento de WMI pueden faltar en algunos equipos ("Clase no valida").
+# Sin ellos se registra solo el uso total de CPU (Win32_Processor) y la GPU.
+$perfCpu = $true; $perfProc = $true
+try { $null = Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -ErrorAction Stop } catch { $perfCpu = $false }
+try { $null = Get-CimInstance Win32_PerfRawData_PerfProc_Process -Filter "Name = 'Idle'" -ErrorAction Stop } catch { $perfProc = $false }
+if (-not ($perfCpu -and $perfProc)) {
+    Write-Warning 'Los contadores de rendimiento de Windows (WMI) no estan disponibles: solo se medira el uso total de CPU y la GPU.'
+    Write-Warning 'Para repararlos (opcional): PowerShell como administrador -> winmgmt /resyncperf  y reinicia.'
+}
+
+# Si Roblox no aparece en la GPU NVIDIA, los datos de GPU no son de Roblox.
+$robloxOnNvidia = $null
+if ($smi -and @(Get-Process -Name 'RobloxPlayerBeta' -ErrorAction SilentlyContinue).Count -gt 0) {
+    $robloxOnNvidia = [bool](@(& $smi 2>&1 | ForEach-Object { "$_" }) -match 'RobloxPlayerBeta')
+    if (-not $robloxOnNvidia) { Write-Warning 'Roblox esta abierto pero NO usa la RTX 2050. Arregla eso primero (guia, seccion 5.2).' }
+}
+
 # --- Bucle de CPU -------------------------------------------------------------
 $rows = New-Object System.Collections.Generic.List[object]
 $prevProc = $null
 $prevThreads = $null
 $end = (Get-Date).AddSeconds($Segundos)
 $i = 0
-$null = Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation   # primera lectura descartada
+if ($perfCpu) { $null = Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation }   # primera lectura descartada
 
 Write-Host "Registrando $Segundos s. Vuelve al juego. (Ctrl+C para cortar antes; los datos ya registrados se pierden)" -ForegroundColor Cyan
 try {
     while ((Get-Date) -lt $end) {
         $t0 = Get-Date
-        $pi = @(Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation)
-        $tot = $pi | Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
-        $cores = @($pi | Where-Object { $_.Name -match '^\d+,\d+$' })
-        $maxCore = ($cores | Measure-Object PercentProcessorTime -Maximum).Maximum
-        $maxPerf = ($cores | Measure-Object PercentProcessorPerformance -Maximum).Maximum
-        $mhzMax = if ($tot) { [math]::Round($tot.ProcessorFrequency * $maxPerf / 100) } else { $null }
+        $cpuTotal = $null; $maxCore = $null; $mhzMax = $null
+        if ($perfCpu) {
+            $pi = @(Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation)
+            $tot = $pi | Where-Object { $_.Name -eq '_Total' } | Select-Object -First 1
+            $cores = @($pi | Where-Object { $_.Name -match '^\d+,\d+$' })
+            if ($tot) { $cpuTotal = [math]::Round($tot.PercentProcessorTime, 1) }
+            if ($cores.Count -gt 0) {
+                $maxCore = [math]::Round(($cores | Measure-Object PercentProcessorTime -Maximum).Maximum, 1)
+                $maxPerf = ($cores | Measure-Object PercentProcessorPerformance -Maximum).Maximum
+                if ($tot) { $mhzMax = [math]::Round($tot.ProcessorFrequency * $maxPerf / 100) }
+            }
+        } else {
+            $cpuTotal = [math]::Round((Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average, 1)
+        }
 
+        $rbxOpen = @(Get-Process -Name 'RobloxPlayerBeta' -ErrorAction SilentlyContinue).Count -gt 0
         $rbxCpu = $null; $rbxRam = $null; $thrMax = $null
-        $rp = @(Get-CimInstance Win32_PerfRawData_PerfProc_Process -Filter "Name LIKE 'RobloxPlayerBeta%'")
+        $rp = if ($perfProc) { @(Get-CimInstance Win32_PerfRawData_PerfProc_Process -Filter "Name LIKE 'RobloxPlayerBeta%'") } else { @() }
         if ($rp.Count -gt 0) {
             $cur = $rp[0]
             if ($prevProc -and $prevProc.IDProcess -eq $cur.IDProcess) {
@@ -125,9 +151,10 @@ try {
         if ($i -gt 0) {
             $rows.Add([pscustomobject]@{
                 Hora                  = $t0.ToString('HH:mm:ss')
-                CPU_Total_pct         = if ($tot) { [math]::Round($tot.PercentProcessorTime, 1) } else { $null }
-                CPU_NucleoMax_pct     = [math]::Round($maxCore, 1)
+                CPU_Total_pct         = $cpuTotal
+                CPU_NucleoMax_pct     = $maxCore
                 CPU_MHz_NucleoRapido  = $mhzMax
+                Roblox_Abierto        = $rbxOpen
                 Roblox_CPU_pct1Nucleo = $rbxCpu
                 Roblox_HiloMax_pct    = $thrMax
                 Roblox_RAM_MB         = $rbxRam
@@ -149,8 +176,10 @@ function S([string]$t = '') { $out.Add($t); Write-Host $t }
 
 S "Resumen de carga - etiqueta '$Etiqueta' - $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 S ("Muestras de CPU: {0}" -f $rows.Count)
-$robloxSeen = @($rows | Where-Object { $null -ne $_.Roblox_RAM_MB }).Count -gt 0
+$robloxSeen = @($rows | Where-Object { $_.Roblox_Abierto }).Count -gt 0
 if (-not $robloxSeen) { S '[!] Roblox no estuvo abierto durante la medicion.' }
+if ($robloxOnNvidia -eq $false) { S '[!] Roblox NO estaba usando la RTX 2050: los datos de GPU de abajo no son de Roblox. Arregla eso primero (guia, seccion 5.2).' }
+if (-not ($perfCpu -and $perfProc)) { S '[!] Sin contadores de rendimiento de WMI: no se pudo medir la CPU de Roblox ni su hilo principal.' }
 
 function Show([string]$label, $vals, [string]$unit) {
     $st = Get-Stats ([double[]]@($vals | Where-Object { $null -ne $_ }))
@@ -210,24 +239,28 @@ if ($smi -and (Test-Path -LiteralPath $gpuCsv)) {
 S ''
 S 'Lectura orientativa (combinala con PresentMon y HWiNFO):'
 $said = $false
-if ($gpuUtil -and $gpuUtil.Prom -ge 95) {
+if ($robloxOnNvidia -ne $false -and $gpuUtil -and $gpuUtil.Prom -ge 95) {
     S '- La GPU trabaja al maximo casi todo el tiempo: probable limite por GPU.'
     S '  Prueba: bajar la calidad grafica de Roblox, quitar MSAA, o fijar un limite de FPS que la GPU sostenga con margen.'
     $said = $true
 }
-if ($gpuUtil -and $gpuUtil.Prom -ge 85 -and $gpuUtil.Prom -lt 95) {
+if ($robloxOnNvidia -ne $false -and $gpuUtil -and $gpuUtil.Prom -ge 85 -and $gpuUtil.Prom -lt 95) {
     S '- La GPU va alta (85-95%) sin saturarse del todo: CPU y GPU estan cerca de su limite a la vez.'
     S '  Bajar un poco la calidad grafica suele aliviar a ambas.'
     $said = $true
 }
-if ($gpuUtil -and $gpuUtil.Prom -lt 85 -and $thr -and $thr.P95 -ge 85) {
+if ($robloxOnNvidia -ne $false -and $gpuUtil -and $gpuUtil.Prom -lt 85 -and $thr -and $thr.P95 -ge 85) {
     S '- La GPU tiene margen y un hilo de Roblox llega a ~100% de un nucleo: probable limite por CPU / motor de Roblox.'
     S '  Prueba: modo de energia y NitroSense en rendimiento, cerrar procesos pesados, calidad grafica mas baja (tambien alivia la CPU).'
     $said = $true
 }
-if ($gpuUtil -and $gpuUtil.Prom -lt 85 -and (-not $thr -or $thr.P95 -lt 85)) {
+if ($robloxOnNvidia -ne $false -and $gpuUtil -and $gpuUtil.Prom -lt 85 -and $thr -and $thr.P95 -lt 85) {
     S '- Ni la GPU ni el hilo principal estan saturados. Si los FPS estaban en tu limite, es lo esperado (el limitador manda).'
     S '  Para ver el techo real, repite la medicion con el limite de Roblox en 240.'
+    $said = $true
+}
+if ($robloxOnNvidia -ne $false -and $gpuUtil -and $gpuUtil.Prom -lt 85 -and -not $thr) {
+    S '- La GPU tiene margen: el limite esta en la CPU / motor de Roblox o en tu limitador de FPS (sin datos del hilo principal para distinguirlo).'
     $said = $true
 }
 if ($reasonSummary.Count -gt 0) {
